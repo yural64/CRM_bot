@@ -43,7 +43,7 @@ if client:
     'phone': '+7 900 123-45-67',
     'telegram_id': 123456789,
     'notes': None,
-    'created_at': datetime(2024, 1, 1, 12, 0, 0)
+    'created_at': datetime(2025, 1, 1, 12, 0, 0)
 }
 ```
 
@@ -117,7 +117,7 @@ all_services = db.get_all_services(active_only=False)
         'duration_minutes': 60,
         'description': 'Мужская или женская стрижка',
         'is_active': True,
-        'created_at': datetime(2024, 1, 1, 10, 0, 0)
+        'created_at': datetime(2025, 1, 1, 10, 0, 0)
     },
     ...
 ]
@@ -159,7 +159,7 @@ from datetime import datetime
 appointment_id = db.add_appointment(
     client_id=1,
     service_id=1,
-    appointment_datetime=datetime(2024, 12, 15, 14, 30),
+    appointment_datetime=datetime(2025, 12, 15, 14, 30),
     comment="Клиент просил мастера Анну"
 )
 ```
@@ -183,10 +183,10 @@ pending = db.get_client_appointments(client_id=1, status='pending')
         'id': 1,
         'client_id': 1,
         'service_id': 1,
-        'appointment_datetime': datetime(2024, 12, 15, 14, 30),
+        'appointment_datetime': datetime(2025, 12, 15, 14, 30),
         'status': 'pending',
         'comment': 'Клиент просил мастера Анну',
-        'created_at': datetime(2024, 12, 1, 10, 0, 0),
+        'created_at': datetime(2025, 12, 1, 10, 0, 0),
         'service_name': 'Стрижка',  # JOIN с services
         'price': Decimal('1500.00')
     },
