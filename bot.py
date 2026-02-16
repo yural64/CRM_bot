@@ -26,6 +26,20 @@ bot = telebot.TeleBot(BOT_TOKEN, state_storage=state_storage)
 bot.add_custom_filter(custom_filters.StateFilter(bot))
 
 
+def get_main_menu_keyboard() -> types.InlineKeyboardMarkup:
+    """Основное меню быстрых действий."""
+    keyboard = types.InlineKeyboardMarkup(row_width=2)
+    keyboard.add(
+        types.InlineKeyboardButton("📝 Записаться", callback_data="menu_book"),
+        types.InlineKeyboardButton("📋 Мои записи", callback_data="menu_my_appointments"),
+    )
+    keyboard.add(
+        types.InlineKeyboardButton("📊 Услуги", callback_data="menu_services"),
+        types.InlineKeyboardButton("👤 Профиль", callback_data="menu_profile"),
+    )
+    return keyboard
+
+
 # =============================================================================
 # Состояния FSM
 # =============================================================================
@@ -48,13 +62,12 @@ class AppointmentBooking(StatesGroup):
 # Команды
 # =============================================================================
 
-@bot.message_handler(commands=['start'])
-def cmd_start(message: types.Message):
-    """Обработчик команды /start."""
-    user_name = message.from_user.first_name or "Пользователь"
+def send_main_menu(user_id: int, chat_id: int, user_name: str | None = None) -> None:
+    """Отправляет главное приветствие и меню."""
+    if not user_name:
+        user_name = "Пользователь"
     
-    # Проверяем, зарегистрирован ли клиент
-    client = db.get_client_by_telegram_id(message.from_user.id)
+    client = db.get_client_by_telegram_id(user_id)
     
     if client:
         text = (
@@ -81,7 +94,14 @@ def cmd_start(message: types.Message):
             "📝 Нажмите /register для регистрации"
         )
     
-    bot.reply_to(message, text, parse_mode='HTML')
+    bot.send_message(chat_id, text, parse_mode='HTML', reply_markup=get_main_menu_keyboard())
+
+
+@bot.message_handler(commands=['start'])
+def cmd_start(message: types.Message):
+    """Обработчик команды /start."""
+    user_name = message.from_user.first_name or "Пользователь"
+    send_main_menu(message.from_user.id, message.chat.id, user_name=user_name)
 
 
 @bot.message_handler(commands=['help'])
@@ -108,7 +128,26 @@ def cmd_help(message: types.Message):
         "📞 По вопросам звоните: +7 (900) 123-45-67"
     )
     
-    bot.reply_to(message, text, parse_mode='HTML')
+    bot.reply_to(message, text, parse_mode='HTML', reply_markup=get_main_menu_keyboard())
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("menu_"))
+def handle_main_menu_buttons(call: types.CallbackQuery):
+    """Обработка кнопок главного меню под сообщениями."""
+    action = call.data.split("_", 1)[1]
+    bot.answer_callback_query(call.id)
+    
+    if action == "book":
+        start_booking(call.from_user.id, call.message.chat.id)
+    elif action == "my_appointments":
+        send_my_appointments(call.from_user.id, call.message.chat.id)
+    elif action == "services":
+        cmd_services(call.message)
+    elif action == "profile":
+        send_profile(call.from_user.id, call.message.chat.id)
+    elif action == "home":
+        user_name = call.from_user.first_name or "Пользователь"
+        send_main_menu(call.from_user.id, call.message.chat.id, user_name=user_name)
 
 
 @bot.message_handler(commands=['cancel'], state='*')
@@ -281,6 +320,14 @@ def cmd_services(message: types.Message):
                 )
             )
         
+        # Кнопка возврата в главное меню
+        keyboard.add(
+            types.InlineKeyboardButton(
+                "🏠 Главное меню",
+                callback_data="menu_home"
+            )
+        )
+        
         text = (
             "━━━━━━━━━━━━━━━━━━━━━━\n"
             "🚗  <b>УСЛУГИ АВТОСЕРВИСА</b>\n"
@@ -389,7 +436,21 @@ def show_category_services(message, category_name, services, page=0):
             )
         )
     
-    keyboard.add(*buttons)
+    # Кнопка возврата в главное меню
+    home_button = types.InlineKeyboardButton(
+        "🏠 Главное меню",
+        callback_data="menu_home"
+    )
+
+    # Если только одна кнопка (обычно "Категории") — ставим её в ряд с "Главное меню"
+    if len(buttons) == 1:
+        keyboard.add(buttons[0], home_button)
+    else:
+        # Первая строка навигации (назад / категории / далее)
+        if buttons:
+            keyboard.add(*buttons)
+        # Вторая строка — главное меню
+        keyboard.add(home_button)
     
     # Отправляем или редактируем сообщение
     try:
@@ -450,6 +511,14 @@ def handle_back_to_categories(call: types.CallbackQuery):
                 )
             )
         
+        # Кнопка возврата в главное меню
+        keyboard.add(
+            types.InlineKeyboardButton(
+                "🏠 Главное меню",
+                callback_data="menu_home"
+            )
+        )
+        
         text = (
             "━━━━━━━━━━━━━━━━━━━━━━\n"
             "🚗  <b>УСЛУГИ АВТОСЕРВИСА</b>\n"
@@ -478,17 +547,22 @@ def handle_back_to_categories(call: types.CallbackQuery):
 
 @bot.message_handler(commands=['book'])
 def cmd_book(message: types.Message):
-    """Начало процесса записи - выбор категории."""
+    """Команда /book — обёртка над start_booking для сообщений."""
+    start_booking(message.from_user.id, message.chat.id)
+
+
+def start_booking(user_id: int, chat_id: int) -> None:
+    """Начало процесса записи - выбор категории (общая логика)."""
     # Проверяем регистрацию
-    client = db.get_client_by_telegram_id(message.from_user.id)
+    client = db.get_client_by_telegram_id(user_id)
     if not client:
-        bot.reply_to(message, "⚠️ Сначала зарегистрируйтесь: /register")
+        bot.send_message(chat_id, "⚠️ Сначала зарегистрируйтесь: /register", reply_markup=get_main_menu_keyboard())
         return
     
     # Получаем услуги
     services = db.get_all_services()
     if not services:
-        bot.reply_to(message, "⚠️ Пока нет доступных услуг")
+        bot.send_message(chat_id, "⚠️ Пока нет доступных услуг", reply_markup=get_main_menu_keyboard())
         return
     
     # Группируем по категориям
@@ -510,7 +584,7 @@ def cmd_book(message: types.Message):
         "Шаг 1️⃣: Выберите категорию услуги"
     )
     
-    bot.send_message(message.chat.id, text, parse_mode='HTML', reply_markup=keyboard)
+    bot.send_message(chat_id, text, parse_mode='HTML', reply_markup=keyboard)
 
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("book_cat_"))
@@ -539,7 +613,7 @@ def handle_booking_category_selection(call: types.CallbackQuery):
 def show_booking_services(message, category_name, services, category_index):
     """Показывает услуги из категории для записи."""
     # Создаём клавиатуру с услугами
-    keyboard = types.InlineKeyboardMarkup(row_width=1)
+    keyboard = types.InlineKeyboardMarkup(row_width=2)
     
     for service in services:
         keyboard.add(
@@ -549,11 +623,15 @@ def show_booking_services(message, category_name, services, category_index):
             )
         )
     
-    # Кнопка "Назад к категориям"
+    # Управляющие кнопки: назад к категориям + сразу в главное меню (в одной строке)
     keyboard.add(
         types.InlineKeyboardButton(
             "🔙 К выбору категории",
             callback_data="back_to_booking_categories"
+        ),
+        types.InlineKeyboardButton(
+            "🏠 Главное меню",
+            callback_data="menu_home"
         )
     )
     
@@ -879,16 +957,21 @@ def handle_booking_time_selection(call: types.CallbackQuery):
 
 @bot.message_handler(commands=['my_appointments'])
 def cmd_my_appointments(message: types.Message):
-    """Показывает записи пользователя."""
-    client = db.get_client_by_telegram_id(message.from_user.id)
+    """Команда /my_appointments — обёртка над send_my_appointments."""
+    send_my_appointments(message.from_user.id, message.chat.id)
+
+
+def send_my_appointments(user_id: int, chat_id: int) -> None:
+    """Показывает записи пользователя (общая логика)."""
+    client = db.get_client_by_telegram_id(user_id)
     if not client:
-        bot.reply_to(message, "⚠️ Сначала зарегистрируйтесь: /register")
+        bot.send_message(chat_id, "⚠️ Сначала зарегистрируйтесь: /register", reply_markup=get_main_menu_keyboard())
         return
     
     appointments = db.get_client_appointments(client['id'])
     
     if not appointments:
-        bot.reply_to(message, "📋 У вас пока нет записей\n\n📝 /book — записаться")
+        bot.send_message(chat_id, "📋 У вас пока нет записей\n\n📝 /book — записаться", reply_markup=get_main_menu_keyboard())
         return
     
     text = "━━━━━━━━━━━━━━━━━━━━━━\n📋  <b>МОИ ЗАПИСИ</b>\n━━━━━━━━━━━━━━━━━━━━━━\n\n"
@@ -912,7 +995,7 @@ def cmd_my_appointments(message: types.Message):
             f"   Статус: {app['status']}\n\n"
         )
     
-    bot.reply_to(message, text, parse_mode='HTML')
+    bot.send_message(chat_id, text, parse_mode='HTML', reply_markup=get_main_menu_keyboard())
 
 
 # =============================================================================
@@ -921,10 +1004,15 @@ def cmd_my_appointments(message: types.Message):
 
 @bot.message_handler(commands=['profile'])
 def cmd_profile(message: types.Message):
-    """Показывает профиль пользователя."""
-    client = db.get_client_by_telegram_id(message.from_user.id)
+    """Команда /profile — обёртка над send_profile."""
+    send_profile(message.from_user.id, message.chat.id)
+
+
+def send_profile(user_id: int, chat_id: int) -> None:
+    """Показывает профиль пользователя (общая логика)."""
+    client = db.get_client_by_telegram_id(user_id)
     if not client:
-        bot.reply_to(message, "⚠️ Сначала зарегистрируйтесь: /register")
+        bot.send_message(chat_id, "⚠️ Сначала зарегистрируйтесь: /register", reply_markup=get_main_menu_keyboard())
         return
     
     # Статистика записей
@@ -942,7 +1030,7 @@ def cmd_profile(message: types.Message):
         f"Клиент с: {client['created_at'].strftime('%d.%m.%Y')}"
     )
     
-    bot.reply_to(message, text, parse_mode='HTML')
+    bot.send_message(chat_id, text, parse_mode='HTML', reply_markup=get_main_menu_keyboard())
 
 
 # =============================================================================
